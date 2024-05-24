@@ -36,9 +36,9 @@ const (
 )
 
 var (
-	envNetstatMetrics = os.Getenv("NETSTAT_METRICS")
+	envNetstatMetrics  = os.Getenv("NETSTAT_METRICS")
 	netstatMetricsList = strings.Split(envNetstatMetrics, ",")
-	regexpPattern = "^(" + strings.Join(netstatMetricsList, "|") + ")$"
+	regexpPattern      = "^(" + strings.Join(netstatMetricsList, "|") + ")$"
 
 	netStatFields = kingpin.Flag("collector.netstat.fields", "Regexp of fields to return for netstat collector.").Default(regexpPattern).String()
 )

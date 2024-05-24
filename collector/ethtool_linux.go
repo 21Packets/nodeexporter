@@ -96,6 +96,16 @@ func makeEthtoolCollector(logger log.Logger) (*ethtoolCollector, error) {
 		return nil, fmt.Errorf("failed to initialize ethtool library: %w", err)
 	}
 
+	if *ethtoolDeviceInclude != "" {
+		level.Info(logger).Log("msg", "Parsed flag --collector.ethtool.device-include", "flag", *ethtoolDeviceInclude)
+	}
+	if *ethtoolDeviceExclude != "" {
+		level.Info(logger).Log("msg", "Parsed flag --collector.ethtool.device-exclude", "flag", *ethtoolDeviceExclude)
+	}
+	if *ethtoolIncludedMetrics != "" {
+		level.Info(logger).Log("msg", "Parsed flag --collector.ethtool.metrics-include", "flag", *ethtoolIncludedMetrics)
+	}
+
 	// Pre-populate some common ethtool metrics.
 	return &ethtoolCollector{
 		fs:             fs,
@@ -445,18 +455,19 @@ func (c *ethtoolCollector) Update(ch chan<- prometheus.Metric) error {
 		// Sanitizing the metric names can lead to duplicate metric names. Therefore check for clashes beforehand.
 		metricFQNames := make(map[string]string)
 		for metric := range stats {
-			if !c.metricsPattern.MatchString(metric) {
+			metricName := SanitizeMetricName(metric)
+			if !c.metricsPattern.MatchString(metricName) {
 				continue
 			}
-			metricFQName := buildEthtoolFQName(metric)
+			metricFQName := buildEthtoolFQName(metricName)
 			existingMetric, exists := metricFQNames[metricFQName]
 			if exists {
 				level.Debug(c.logger).Log("msg", "dropping duplicate metric name", "device", device,
-					"metricFQName", metricFQName, "metric1", existingMetric, "metric2", metric)
-				// Keep the metric as "deleted" in the dict in case there are 3 duplicates.
+					"metricFQName", metricFQName, "metric1", existingMetric, "metric2", metricName)
+				// Keep the metricName as "deleted" in the dict in case there are 3 duplicates.
 				metricFQNames[metricFQName] = ""
 			} else {
-				metricFQNames[metricFQName] = metric
+				metricFQNames[metricFQName] = metricName
 			}
 		}
 

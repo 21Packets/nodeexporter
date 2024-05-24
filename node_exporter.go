@@ -31,6 +31,7 @@ import (
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 	promcollectors "github.com/prometheus/client_golang/prometheus/collectors"
+	versioncollector "github.com/prometheus/client_golang/prometheus/collectors/version"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/version"
 	"github.com/prometheus/exporter-toolkit/web"
@@ -119,26 +120,38 @@ func (h *handler) innerHandler(filters ...string) (http.Handler, error) {
 	}
 
 	r := prometheus.NewRegistry()
-	r.MustRegister(version.NewCollector("node_exporter"))
+	r.MustRegister(versioncollector.NewCollector("node_exporter"))
 	if err := r.Register(nc); err != nil {
 		return nil, fmt.Errorf("couldn't register node collector: %s", err)
 	}
-	handler := promhttp.HandlerFor(
-		prometheus.Gatherers{h.exporterMetricsRegistry, r},
-		promhttp.HandlerOpts{
-			ErrorLog:            stdlog.New(log.NewStdlibAdapter(level.Error(h.logger)), "", 0),
-			ErrorHandling:       promhttp.ContinueOnError,
-			MaxRequestsInFlight: h.maxRequests,
-			Registry:            h.exporterMetricsRegistry,
-		},
-	)
+
+	var handler http.Handler
 	if h.includeExporterMetrics {
+		handler = promhttp.HandlerFor(
+			prometheus.Gatherers{h.exporterMetricsRegistry, r},
+			promhttp.HandlerOpts{
+				ErrorLog:            stdlog.New(log.NewStdlibAdapter(level.Error(h.logger)), "", 0),
+				ErrorHandling:       promhttp.ContinueOnError,
+				MaxRequestsInFlight: h.maxRequests,
+				Registry:            h.exporterMetricsRegistry,
+			},
+		)
 		// Note that we have to use h.exporterMetricsRegistry here to
 		// use the same promhttp metrics for all expositions.
 		handler = promhttp.InstrumentMetricHandler(
 			h.exporterMetricsRegistry, handler,
 		)
+	} else {
+		handler = promhttp.HandlerFor(
+			r,
+			promhttp.HandlerOpts{
+				ErrorLog:            stdlog.New(log.NewStdlibAdapter(level.Error(h.logger)), "", 0),
+				ErrorHandling:       promhttp.ContinueOnError,
+				MaxRequestsInFlight: h.maxRequests,
+			},
+		)
 	}
+
 	return handler, nil
 }
 
