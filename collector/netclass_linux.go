@@ -22,6 +22,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/alecthomas/kingpin/v2"
@@ -35,6 +36,9 @@ var (
 	netclassIgnoredDevices = kingpin.Flag("collector.netclass.ignored-devices", "Regexp of net devices to ignore for netclass collector.").Default("^$").String()
 	netclassInvalidSpeed   = kingpin.Flag("collector.netclass.ignore-invalid-speed", "Ignore devices where the speed is invalid. This will be the default behavior in 2.x.").Bool()
 	netclassNetlink        = kingpin.Flag("collector.netclass.netlink", "Use netlink to gather stats instead of /proc/net/dev.").Default("false").Bool()
+
+	envNetclassMetrics = os.Getenv("NETCLASS_METRICS")
+	allowedMetrics     = strings.Split(envNetclassMetrics, ",")
 )
 
 type netClassCollector struct {
@@ -83,45 +87,77 @@ func (c *netClassCollector) netClassSysfsUpdate(ch chan<- prometheus.Metric) err
 		return fmt.Errorf("could not get net class info: %w", err)
 	}
 	for _, ifaceInfo := range netClass {
-		upDesc := prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, c.subsystem, "up"),
-			"Value is 1 if operstate is 'up', 0 otherwise.",
-			[]string{"device"},
-			nil,
-		)
-		upValue := 0.0
-		if ifaceInfo.OperState == "up" {
-			upValue = 1.0
+		if isAllowedMetric("up") {
+			upDesc := prometheus.NewDesc(
+				prometheus.BuildFQName(namespace, c.subsystem, "up"),
+				"Value is 1 if operstate is 'up', 0 otherwise.",
+				[]string{"device"},
+				nil,
+			)
+			upValue := 0.0
+			if ifaceInfo.OperState == "up" {
+				upValue = 1.0
+			}
+
+			ch <- prometheus.MustNewConstMetric(upDesc, prometheus.GaugeValue, upValue, ifaceInfo.Name)
 		}
 
-		ch <- prometheus.MustNewConstMetric(upDesc, prometheus.GaugeValue, upValue, ifaceInfo.Name)
+		if isAllowedMetric("info") {
+			infoDesc := prometheus.NewDesc(
+				prometheus.BuildFQName(namespace, c.subsystem, "info"),
+				"Non-numeric data from /sys/class/net/<iface>, value is always 1.",
+				[]string{"device", "address", "broadcast", "duplex", "operstate", "adminstate", "ifalias"},
+				nil,
+			)
+			infoValue := 1.0
 
-		infoDesc := prometheus.NewDesc(
-			prometheus.BuildFQName(namespace, c.subsystem, "info"),
-			"Non-numeric data from /sys/class/net/<iface>, value is always 1.",
-			[]string{"device", "address", "broadcast", "duplex", "operstate", "adminstate", "ifalias"},
-			nil,
-		)
-		infoValue := 1.0
+			ch <- prometheus.MustNewConstMetric(infoDesc, prometheus.GaugeValue, infoValue, ifaceInfo.Name, ifaceInfo.Address, ifaceInfo.Broadcast, ifaceInfo.Duplex, ifaceInfo.OperState, getAdminState(ifaceInfo.Flags), ifaceInfo.IfAlias)
+		}
 
-		ch <- prometheus.MustNewConstMetric(infoDesc, prometheus.GaugeValue, infoValue, ifaceInfo.Name, ifaceInfo.Address, ifaceInfo.Broadcast, ifaceInfo.Duplex, ifaceInfo.OperState, getAdminState(ifaceInfo.Flags), ifaceInfo.IfAlias)
+		if isAllowedMetric("address_assign_type") {
+			pushMetric(ch, c.getFieldDesc("address_assign_type"), "address_assign_type", ifaceInfo.AddrAssignType, prometheus.GaugeValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("carrier") {
+			pushMetric(ch, c.getFieldDesc("carrier"), "carrier", ifaceInfo.Carrier, prometheus.GaugeValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("carrier_changes_total") {
+			pushMetric(ch, c.getFieldDesc("carrier_changes_total"), "carrier_changes_total", ifaceInfo.CarrierChanges, prometheus.CounterValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("carrier_up_changes_total") {
+			pushMetric(ch, c.getFieldDesc("carrier_up_changes_total"), "carrier_up_changes_total", ifaceInfo.CarrierUpCount, prometheus.CounterValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("carrier_down_changes_total") {
+			pushMetric(ch, c.getFieldDesc("carrier_down_changes_total"), "carrier_down_changes_total", ifaceInfo.CarrierDownCount, prometheus.CounterValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("device_id") {
+			pushMetric(ch, c.getFieldDesc("device_id"), "device_id", ifaceInfo.DevID, prometheus.GaugeValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("dormant") {
+			pushMetric(ch, c.getFieldDesc("dormant"), "dormant", ifaceInfo.Dormant, prometheus.GaugeValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("flags") {
+			pushMetric(ch, c.getFieldDesc("flags"), "flags", ifaceInfo.Flags, prometheus.GaugeValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("iface_id") {
+			pushMetric(ch, c.getFieldDesc("iface_id"), "iface_id", ifaceInfo.IfIndex, prometheus.GaugeValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("iface_link") {
+			pushMetric(ch, c.getFieldDesc("iface_link"), "iface_link", ifaceInfo.IfLink, prometheus.GaugeValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("iface_link_mode") {
+			pushMetric(ch, c.getFieldDesc("iface_link_mode"), "iface_link_mode", ifaceInfo.LinkMode, prometheus.GaugeValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("mtu_bytes") {
+			pushMetric(ch, c.getFieldDesc("mtu_bytes"), "mtu_bytes", ifaceInfo.MTU, prometheus.GaugeValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("name_assign_type") {
+			pushMetric(ch, c.getFieldDesc("name_assign_type"), "name_assign_type", ifaceInfo.NameAssignType, prometheus.GaugeValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("net_dev_group") {
+			pushMetric(ch, c.getFieldDesc("net_dev_group"), "net_dev_group", ifaceInfo.NetDevGroup, prometheus.GaugeValue, ifaceInfo.Name)
+		}
 
-		pushMetric(ch, c.getFieldDesc("address_assign_type"), "address_assign_type", ifaceInfo.AddrAssignType, prometheus.GaugeValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("carrier"), "carrier", ifaceInfo.Carrier, prometheus.GaugeValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("carrier_changes_total"), "carrier_changes_total", ifaceInfo.CarrierChanges, prometheus.CounterValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("carrier_up_changes_total"), "carrier_up_changes_total", ifaceInfo.CarrierUpCount, prometheus.CounterValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("carrier_down_changes_total"), "carrier_down_changes_total", ifaceInfo.CarrierDownCount, prometheus.CounterValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("device_id"), "device_id", ifaceInfo.DevID, prometheus.GaugeValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("dormant"), "dormant", ifaceInfo.Dormant, prometheus.GaugeValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("flags"), "flags", ifaceInfo.Flags, prometheus.GaugeValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("iface_id"), "iface_id", ifaceInfo.IfIndex, prometheus.GaugeValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("iface_link"), "iface_link", ifaceInfo.IfLink, prometheus.GaugeValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("iface_link_mode"), "iface_link_mode", ifaceInfo.LinkMode, prometheus.GaugeValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("mtu_bytes"), "mtu_bytes", ifaceInfo.MTU, prometheus.GaugeValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("name_assign_type"), "name_assign_type", ifaceInfo.NameAssignType, prometheus.GaugeValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("net_dev_group"), "net_dev_group", ifaceInfo.NetDevGroup, prometheus.GaugeValue, ifaceInfo.Name)
-
-		if ifaceInfo.Speed != nil {
+		if ifaceInfo.Speed != nil && isAllowedMetric("speed_bytes") {
 			// Some devices return -1 if the speed is unknown.
 			if *ifaceInfo.Speed >= 0 || !*netclassInvalidSpeed {
 				speedBytes := int64(*ifaceInfo.Speed * 1000 * 1000 / 8)
@@ -129,9 +165,12 @@ func (c *netClassCollector) netClassSysfsUpdate(ch chan<- prometheus.Metric) err
 			}
 		}
 
-		pushMetric(ch, c.getFieldDesc("transmit_queue_length"), "transmit_queue_length", ifaceInfo.TxQueueLen, prometheus.GaugeValue, ifaceInfo.Name)
-		pushMetric(ch, c.getFieldDesc("protocol_type"), "protocol_type", ifaceInfo.Type, prometheus.GaugeValue, ifaceInfo.Name)
-
+		if isAllowedMetric("transmit_queue_length") {
+			pushMetric(ch, c.getFieldDesc("transmit_queue_length"), "transmit_queue_length", ifaceInfo.TxQueueLen, prometheus.GaugeValue, ifaceInfo.Name)
+		}
+		if isAllowedMetric("protocol_type") {
+			pushMetric(ch, c.getFieldDesc("protocol_type"), "protocol_type", ifaceInfo.Type, prometheus.GaugeValue, ifaceInfo.Name)
+		}
 	}
 
 	return nil
@@ -187,4 +226,13 @@ func getAdminState(flags *int64) string {
 	}
 
 	return "down"
+}
+
+func isAllowedMetric(metric string) bool {
+	for _, allowed := range allowedMetrics {
+		if metric == allowed {
+			return true
+		}
+	}
+	return false
 }
